@@ -1,0 +1,6 @@
+node_modules/
+coverage/
+*.tgz
+*.tsbuildinfo
+.DS_Store
+# web/dist and dist/server.mjs are intentionally tracked for Pi Git installs.
