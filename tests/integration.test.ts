@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { rmSync, readdirSync } from 'node:fs';
+import { appendFileSync, readFileSync, rmSync, readdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { execFileSync } from 'node:child_process';
 import { GitProjectInspector } from '../src/project/git.ts';
 import { SqliteTeachStore } from '../src/storage/store.ts';
 import { TeachRuntime, classify } from '../src/lesson/runtime.ts';
@@ -19,6 +21,44 @@ it('general remains general in a repo, project request carries immutable context
   expect(savedP.document.evidence[0].path).toBe('src/auth.ts');
   expect(store.list()).toHaveLength(2); store.close();
   const reopened = new SqliteTeachStore(data); expect(reopened.list()).toHaveLength(2); reopened.close();
+});
+it('rejects a project submission when a clean worktree becomes dirty without changing HEAD', () => {
+  const r = repo(); dirs.push(r.root); const data = temp(); dirs.push(data);
+  const store = new SqliteTeachStore(data); const inspector = new GitProjectInspector();
+  const runtime = new TeachRuntime(store, inspector);
+  const generation = runtime.begin('explain authentication in this project', r.root);
+  expect(generation.project?.dirty).toBe(false);
+  appendFileSync(join(r.root, 'src/auth.ts'), '\n// modified during generation\n');
+  expect(inspector.resolve(r.root)?.revision).toBe(generation.project?.revision);
+  expect(inspector.resolve(r.root)?.dirty).toBe(true);
+  expect(() => runtime.submit(generation, project(generation.project!))).toThrow(/dirty state changed/);
+  expect(store.list()).toHaveLength(0); store.close();
+});
+it('rejects a project submission when a dirty worktree becomes clean without changing HEAD', () => {
+  const r = repo(); dirs.push(r.root); const data = temp(); dirs.push(data);
+  const file = join(r.root, 'src/auth.ts');
+  const original = readFileSync(file, 'utf8');
+  appendFileSync(file, '\n// pending change\n');
+  const store = new SqliteTeachStore(data); const inspector = new GitProjectInspector();
+  const runtime = new TeachRuntime(store, inspector);
+  const generation = runtime.begin('explain authentication in this project', r.root);
+  expect(generation.project?.dirty).toBe(true);
+  writeFileSync(file, original);
+  expect(inspector.resolve(r.root)?.revision).toBe(generation.project?.revision);
+  expect(inspector.resolve(r.root)?.dirty).toBe(false);
+  expect(() => runtime.submit(generation, project(generation.project!))).toThrow(/dirty state changed/);
+  expect(store.list()).toHaveLength(0); store.close();
+});
+it('still rejects a project submission when HEAD changes during investigation', () => {
+  const r = repo(); dirs.push(r.root); const data = temp(); dirs.push(data);
+  const store = new SqliteTeachStore(data);
+  const runtime = new TeachRuntime(store, new GitProjectInspector());
+  const generation = runtime.begin('explain authentication in this project', r.root);
+  appendFileSync(join(r.root, 'src/auth.ts'), '\n// committed during generation\n');
+  execFileSync('git', ['-C', r.root, 'add', 'src/auth.ts']);
+  execFileSync('git', ['-C', r.root, 'commit', '-qm', 'fixture change']);
+  expect(() => runtime.submit(generation, project(generation.project!))).toThrow(/HEAD changed/);
+  expect(store.list()).toHaveLength(0); store.close();
 });
 it('rejects traversal and wrong kind without any successful lesson', () => {
   const r = repo(); dirs.push(r.root); const data = temp(); dirs.push(data);

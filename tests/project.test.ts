@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, renameSync, rmSync, writeFileSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, renameSync, rmSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { GitProjectInspector, normalizeRemote } from '../src/project/git.ts';
@@ -23,10 +23,12 @@ describe('repository snapshot and evidence', () => {
     expect(inspector.resolve(moved)?.repositoryKey).toBe(first.repositoryKey);
     execFileSync('git', ['-C', moved, 'remote', 'add', 'origin', 'https://user:very-secret@Example.org/Org/Repo.git?access_token=abc']);
     const remote = inspector.resolve(moved)!;
-    expect(remote.canonicalRemote).toBe('https://example.org/org/repo');
+    expect(remote.canonicalRemote).toBe('https://example.org/Org/Repo');
     expect(JSON.stringify(remote)).not.toContain('very-secret');
-    expect(normalizeRemote('git@github.com:Owner/Repo.git')).toBe('https://github.com/owner/repo');
-    expect(normalizeRemote('ssh://git:secret@Git.example:2222/Org/Repo.git')).toBe('https://git.example:2222/org/repo');
+    expect(normalizeRemote('git@github.com:Owner/Repo.git')).toBe('https://github.com/Owner/Repo');
+    expect(normalizeRemote('ssh://git:secret@Git.example:2222/Org/Repo.git')).toBe('https://git.example:2222/Org/Repo');
+    expect(normalizeRemote('https://user:secret@EXAMPLE.COM/Team/Repo.GIT/?token=abc#fragment')).toBe('https://example.com/Team/Repo');
+    expect(normalizeRemote('https://host.example/Team/Repo')).not.toBe(normalizeRemote('https://host.example/team/repo'));
     expect(normalizeRemote('file:///tmp/repo')).toBeUndefined();
   });
   it('validates source file, excerpts, traversal, symlinks, line ranges and revision', () => {
@@ -40,7 +42,10 @@ describe('repository snapshot and evidence', () => {
       expect(() => inspector.validate(parseLesson(doc), snap)).toThrow();
     }
     const outside = temp(); cleanup.push(outside); writeFileSync(join(outside, 'secret'), 'x'); symlinkSync(join(outside, 'secret'), join(r.root, 'src', 'link'));
-    const doc = project(snap); doc.evidence[0].path = 'src/link'; expect(() => inspector.validate(parseLesson(doc), snap)).toThrow(/escapes/);
+    const symlinkSnapshot = inspector.resolve(r.root)!;
+    const doc = project(symlinkSnapshot); doc.evidence[0].path = 'src/link';
+    expect(() => inspector.validate(parseLesson(doc), symlinkSnapshot)).toThrow(/escapes/);
+    unlinkSync(join(r.root, 'src', 'link'));
     const range = project(snap); range.evidence[0].endLine = 900; expect(() => inspector.validate(parseLesson(range), snap)).toThrow(/range/);
     const badCode = project(snap); const slide = badCode.sections[0].slides[0]; if (slide.type === 'code') slide.code = '  return false;'; expect(() => inspector.validate(parseLesson(badCode), snap)).toThrow(/excerpt/);
     const rev = project(snap); rev.evidence[0].revision = 'a'.repeat(40); expect(() => parseLesson(rev)).toThrow(/revision/);

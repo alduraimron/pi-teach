@@ -11,16 +11,25 @@ import DOMPurify from 'dompurify';
 import type { Slide } from '../src/domain/lesson.ts';
 
 for (const [name, language] of Object.entries({ typescript, ts: typescript, javascript, js: javascript, python, py: python, json, bash, css, html: xml, xml })) hljs.registerLanguage(name, language);
+
+// Mermaid's flowchart.htmlLabels does not control every node label renderer.
+// The top-level setting ensures labels use SVG text, which survives SVG-only sanitization.
+export const diagramMermaidConfig = { startOnLoad: false, securityLevel: 'strict', theme: 'neutral', htmlLabels: false } as const;
+
+export async function renderDiagramSvg(source: string): Promise<string> {
+  const { default: mermaid } = await import('mermaid');
+  mermaid.initialize(diagramMermaidConfig);
+  const result = await mermaid.render(`diagram-${crypto.randomUUID().replaceAll('-', '')}`, source);
+  return DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: true } });
+}
+
 function Diagram({ source }: { source: string }) {
   const [svg, setSvg] = useState('');
   useEffect(() => {
     let alive = true;
     setSvg('');
-    void import('mermaid').then(async ({ default: mermaid }) => {
-      mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'neutral', flowchart: { htmlLabels: false } });
-      const result = await mermaid.render(`diagram-${crypto.randomUUID().replaceAll('-', '')}`, source);
-      if (alive) setSvg(DOMPurify.sanitize(result.svg, { USE_PROFILES: { svg: true, svgFilters: true } }));
-    }).catch(() => { if (alive) setSvg('Diagram could not be rendered.'); });
+    void renderDiagramSvg(source).then(result => { if (alive) setSvg(result); })
+      .catch(() => { if (alive) setSvg('Diagram could not be rendered.'); });
     return () => { alive = false; };
   }, [source]);
   return svg.startsWith('<svg') ? <div className="diagram" dangerouslySetInnerHTML={{ __html: svg }} /> : <p className="muted">{svg || 'Rendering diagram...'}</p>;

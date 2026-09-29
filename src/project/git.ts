@@ -14,6 +14,7 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8', timeout: 5000, stdio: ['ignore', 'pipe', 'ignore'], env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_OPTIONAL_LOCKS: '0' } }).trim();
 }
 function hash(value: string): string { return createHash('sha256').update(value).digest('hex'); }
+function isDirty(root: string): boolean { return git(root, 'status', '--porcelain', '--untracked-files=normal').length > 0; }
 
 /** Drop userinfo, query, fragment and ambiguous remote syntax; never store raw remote strings. */
 export function normalizeRemote(raw: string): string | undefined {
@@ -22,7 +23,7 @@ export function normalizeRemote(raw: string): string | undefined {
   try {
     const u = new URL(candidate);
     if (!['https:', 'http:', 'ssh:', 'git:'].includes(u.protocol) || !/^[a-z0-9.-]+$/i.test(u.hostname) || !/^\/[a-zA-Z0-9_./-]+$/.test(u.pathname) || u.pathname.split('/').includes('..')) return undefined;
-    return `https://${u.hostname.toLowerCase()}${u.port ? `:${u.port}` : ''}${u.pathname.replace(/\/$/, '').replace(/\.git$/i, '').toLowerCase()}`;
+    return `https://${u.hostname.toLowerCase()}${u.port ? `:${u.port}` : ''}${u.pathname.replace(/\/$/, '').replace(/\.git$/i, '')}`;
   } catch { return undefined; }
 }
 export class GitProjectInspector implements ProjectInspector {
@@ -36,12 +37,13 @@ export class GitProjectInspector implements ProjectInspector {
     // Root commit + initial tree is stable across moves for repositories without a remote.
     const first = git(root, 'rev-list', '--max-parents=0', 'HEAD').split('\n')[0];
     const repositoryKey = `${canonicalRemote ? 'remote' : 'local'}:${hash(canonicalRemote ?? `${first}:${git(root, 'rev-parse', `${first}^{tree}`)}`)}`;
-    return { root, repositoryKey, name: basename(root), revision, dirty: git(root, 'status', '--porcelain', '--untracked-files=normal').length > 0, ...(canonicalRemote ? { canonicalRemote } : {}) };
+    return { root, repositoryKey, name: basename(root), revision, dirty: isDirty(root), ...(canonicalRemote ? { canonicalRemote } : {}) };
   }
   validate(lesson: Lesson, snapshot: ProjectSnapshot): void {
     if (lesson.kind !== 'project') return;
     if (lesson.project.repositoryKey !== snapshot.repositoryKey || lesson.project.revision !== snapshot.revision || lesson.project.dirty !== snapshot.dirty || lesson.project.name !== snapshot.name || lesson.project.canonicalRemote !== snapshot.canonicalRemote) throw new Error('Project metadata differs from captured snapshot');
     if (git(snapshot.root, 'rev-parse', 'HEAD') !== snapshot.revision) throw new Error('Project HEAD changed during investigation');
+    if (isDirty(snapshot.root) !== snapshot.dirty) throw new Error('Project working-tree dirty state changed during investigation');
     const verifiedLines = new Map<string, string[]>();
     for (const item of lesson.evidence) {
       if (!safeRelativePath(item.path)) throw new Error('Unsafe repository evidence path');
