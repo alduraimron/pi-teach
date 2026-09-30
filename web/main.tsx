@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { renderSlide } from './renderers.tsx';
 import { nextSlide } from './navigation.ts';
@@ -30,6 +30,7 @@ function LessonView({ id }: { id: string }) {
   const [error, setError] = useState('');
   const [at, setAt] = useState(0);
   const [overview, setOverview] = useState(false);
+  const stageRef = useRef<HTMLElement>(null);
   useEffect(() => { fetch(`/api/lessons/${encodeURIComponent(id)}`).then(r => { if (!r.ok) throw new Error('Lesson not found'); return r.json() as Promise<SavedLesson>; }).then(setSaved).catch(e => setError(String(e))); }, [id]);
   const slides = saved?.document.sections.flatMap(section => section.slides.map(slide => ({ slide, section: section.title }))) ?? [];
   const current = slides[at];
@@ -42,6 +43,10 @@ function LessonView({ id }: { id: string }) {
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
   }, [slides.length]);
+  useEffect(() => {
+    // The stage owns vertical scrolling; each slide opens at its real beginning.
+    if (stageRef.current) stageRef.current.scrollTop = 0;
+  }, [current?.slide.id]);
   if (error) return <div className="empty"><a href="/">← Library</a><h2>{error}</h2></div>;
   if (!saved || !current) return <div className="empty">Loading lesson...</div>;
   const lesson: Lesson = saved.document;
@@ -50,7 +55,7 @@ function LessonView({ id }: { id: string }) {
   const sources = slide.sourceRefs?.map(ref => lesson.sources.find(x => x.id === ref)).filter(x => x !== undefined) ?? [];
   return <div className="presentation"><header className="topbar"><a className="brand" href="/">✳ <span>teach</span></a><div className="lesson-header"><span className={`badge ${lesson.kind}`}>{lesson.kind}</span><span>{lesson.title}</span></div><button className="icon-button" onClick={() => void (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} title="Toggle fullscreen (F)" aria-label="Toggle fullscreen">⛶</button></header>
     <div className="workspace"><nav className={`rail ${overview ? 'expanded' : ''}`} aria-label="Slide overview"><div className="rail-heading">CONTENTS <button className="mobile-toggle" onClick={() => setOverview(!overview)}>{overview ? 'Close' : 'Open'}</button></div>{slides.map(({slide: s, section}, n) => <button key={s.id} className={`rail-item ${n === at ? 'active' : ''}`} onClick={() => { setAt(n); setOverview(false); }} aria-current={n === at ? 'step' : undefined}><span className="rail-number">{String(n + 1).padStart(2, '0')}</span><span><small>{section}</small>{s.title}</span></button>)}</nav>
-      <main className="stage"><div className="stage-meta"><span>{current.section.toUpperCase()}</span><span>{String(at + 1).padStart(2,'0')} / {String(slides.length).padStart(2,'0')}</span></div><article className={`slide slide-${slide.type}`}>{slide.type !== 'title' && <div className="slide-heading"><span className="eyebrow">{slide.type.toUpperCase()}</span><h1>{slide.title}</h1></div>}{renderSlide(slide)}</article>
+      <main className="stage" ref={stageRef}><div className="stage-meta"><span>{current.section.toUpperCase()}</span><span>{String(at + 1).padStart(2,'0')} / {String(slides.length).padStart(2,'0')}</span></div><article className={`slide slide-${slide.type}`}>{slide.type !== 'title' && <div className="slide-heading"><span className="eyebrow">{slide.type.toUpperCase()}</span><h1>{slide.title}</h1></div>}{renderSlide(slide)}</article>
         {(evidence.length > 0 || sources.length > 0 || lesson.kind === 'project') && <aside className="references"><span className="eyebrow">SOURCES & CONTEXT</span>{lesson.kind === 'project' && <p>Generated from {lesson.project.name} at <code>{lesson.project.revision.slice(0, 12)}</code>{lesson.project.dirty ? ' · Uncommitted changes present' : ''}</p>}{evidence.map(e => <p key={e.id}>⌁ <code>{e.path}{e.startLine ? `:${e.startLine}-${e.endLine}` : ''}</code> <span className="muted">@ {e.revision.slice(0, 8)}</span></p>)}{sources.map(s => <p key={s.id}>↗ <a href={s.url} target="_blank" rel="noopener noreferrer">{s.label}</a></p>)}</aside>}
         <footer className="controls"><a href="/">← Library</a><div className="progress"><div style={{ width: `${(at + 1) / slides.length * 100}%` }} /></div><div className="buttons"><button disabled={at === 0} onClick={() => setAt(at - 1)} aria-label="Previous slide">←</button><button disabled={at === slides.length - 1} onClick={() => setAt(at + 1)} aria-label="Next slide">→</button></div></footer>
       </main></div></div>;
